@@ -65,4 +65,4 @@ const validateCar = data => {
 	return carSchema.validate(data, { abortEarly: false })
 }
 
-module.exports = { validateCar }
+module.exports = validateCar

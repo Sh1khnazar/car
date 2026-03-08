@@ -41,6 +41,10 @@ const userSchema = new Schema(
 		lastName: { type: String, trim: true, default: '' },
 		phone: { type: String, trim: true, default: '' },
 		avatar: { type: String, default: 'default-avatar.png' },
+		isAdmin: {
+			type: Boolean,
+			default: false,
+		},
 	},
 	{ timestamps: true },
 )

@@ -1,4 +1,4 @@
-const validate = schema => {
+exports.validate = schema => {
 	return (req, res, next) => {
 		const { error, value } = schema.validate(req.body, {
 			abortEarly: false, // Barcha xatolarni birdaniga ko'rsatish uchun
@@ -20,5 +20,3 @@ const validate = schema => {
 		next()
 	}
 }
-
-module.exports = validate

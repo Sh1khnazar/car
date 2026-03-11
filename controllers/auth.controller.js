@@ -42,18 +42,17 @@ const verify = async (req, res, next) => {
 
 		if (!user) throw CustomErrorHandler.BadRequest('User not found')
 		if (!user.otp || user.otp.code !== code)
-			throw CustomErrorHandler.Unauthorized('Wrong code')
+			throw CustomErrorHandler.UnAuthorized('Wrong code')
 		if (user.otp.expiresAt < Date.now())
-			throw CustomErrorHandler.Unauthorized('Expired')
+			throw CustomErrorHandler.UnAuthorized('Expired')
 
 		user.isVerified = true
 		user.otp = undefined
 
-		const { accessToken, refreshToken } = generateTokens(user._id)
+		const { accessToken, refreshToken } = generateTokens({ id: user._id })
 		user.refreshToken = refreshToken
 		await user.save()
 
-		// Refresh tokenni cookie-ga joylaymiz
 		res.cookie('refresh_token', refreshToken, {
 			httpOnly: true,
 			secure: process.env.NODE_ENV === 'production',
@@ -75,12 +74,12 @@ const login = async (req, res, next) => {
 		const { email, password } = req.body
 		const user = await User.findOne({ email }).select('+password')
 
-		if (!user) throw CustomErrorHandler.Unauthorized('Invalid credentials')
+		if (!user) throw CustomErrorHandler.UnAuthorized('Invalid credentials')
 		const isMatch = await user.correctPassword(password, user.password)
-		if (!isMatch) throw CustomErrorHandler.Unauthorized('Invalid credentials')
+		if (!isMatch) throw CustomErrorHandler.UnAuthorized('Invalid credentials')
 		if (!user.isVerified) throw CustomErrorHandler.Forbidden('Not verified')
 
-		const { accessToken, refreshToken } = generateTokens(user._id)
+		const { accessToken, refreshToken } = generateTokens({ id: user._id })
 		user.refreshToken = refreshToken
 		await user.save()
 
@@ -107,15 +106,15 @@ const refreshTokenController = async (req, res, next) => {
 		try {
 			decoded = jwt.verify(refresh_token, process.env.JWT_REFRESH_SECRET)
 		} catch (err) {
-			throw CustomErrorHandler.Unauthorized('Invalid refresh token')
+			throw CustomErrorHandler.UnAuthorized('Invalid refresh token')
 		}
 
 		const user = await User.findById(decoded.id).select('+refreshToken')
 		if (!user || user.refreshToken !== refresh_token) {
-			throw CustomErrorHandler.Unauthorized('Invalid token')
+			throw CustomErrorHandler.UnAuthorized('Invalid token')
 		}
 
-		const tokens = generateTokens(user._id)
+		const tokens = generateTokens({ id: user._id })
 		user.refreshToken = tokens.refreshToken
 		await user.save()
 
@@ -132,12 +131,11 @@ const refreshTokenController = async (req, res, next) => {
 	}
 }
 
-// 5. Logout (Cookie va Bazani tozalaydi)
+// 5. Logout
 const logout = async (req, res, next) => {
 	try {
 		const { refresh_token } = req.cookies
 
-		// Bazadagi tokenni o'chirish
 		if (refresh_token) {
 			await User.findOneAndUpdate(
 				{ refreshToken: refresh_token },
@@ -145,7 +143,6 @@ const logout = async (req, res, next) => {
 			)
 		}
 
-		// Cookieni o'chirish
 		res.clearCookie('refresh_token', {
 			httpOnly: true,
 			secure: process.env.NODE_ENV === 'production',
@@ -158,25 +155,42 @@ const logout = async (req, res, next) => {
 	}
 }
 
-// 6. Get Current User (Profil ma'lumotlarini yuklash uchun)
+// 6. Get Current User
 const getMe = async (req, res, next) => {
 	try {
-		// req.user.id auth middleware orqali kelishi kerak
+		const Brand = require('../models/brand')
+		const Car = require('../models/car')
+
 		const user = await User.findById(req.user.id)
 		if (!user) throw CustomErrorHandler.NotFound('Foydalanuvchi topilmadi')
 
-		res.status(200).json({ success: true, data: user })
+		if (user.isAdmin) {
+			const [brands, cars] = await Promise.all([
+				Brand.find(),
+				Car.find({ addedBy: req.user.id }),
+			])
+
+			return res.status(200).json({
+				success: true,
+				data: {
+					user,
+					brands,
+					cars,
+				},
+			})
+		}
+
+		res.status(200).json({ success: true, data: { user } })
 	} catch (error) {
 		next(error)
 	}
 }
 
-// 7. Update Profile (Rasmda ko'rsatilgan maydonlarni yangilash)
+// 7. Update Profile
 const updateMe = async (req, res, next) => {
 	try {
 		const { firstName, lastName, phone, email, username } = req.body
 
-		// 1. Email yoki Username bandligini tekshirish (agar o'zgartirilgan bo'lsa)
 		if (email || username) {
 			const existing = await User.findOne({
 				$or: [{ email }, { username }],
@@ -186,16 +200,9 @@ const updateMe = async (req, res, next) => {
 				throw CustomErrorHandler.BadRequest('Email yoki Username band')
 		}
 
-		// 2. Ma'lumotlarni yangilash
 		const updatedUser = await User.findByIdAndUpdate(
 			req.user.id,
-			{
-				firstName,
-				lastName,
-				phone,
-				email,
-				username,
-			},
+			{ firstName, lastName, phone, email, username },
 			{ new: true, runValidators: true },
 		)
 
@@ -209,6 +216,81 @@ const updateMe = async (req, res, next) => {
 	}
 }
 
+// 8. Forgot Password
+const forgotPassword = async (req, res, next) => {
+	try {
+		const { email } = req.body
+
+		const user = await User.findOne({ email })
+		if (!user) throw CustomErrorHandler.NotFound('Foydalanuvchi topilmadi')
+
+		const otpCode = Math.floor(100000 + Math.random() * 900000).toString()
+		const otpExpires = new Date(Date.now() + 5 * 60 * 1000)
+
+		user.otp = { code: otpCode, expiresAt: otpExpires }
+		await user.save()
+
+		await sendEmail({
+			email: user.email,
+			subject: 'Parolni tiklash',
+			message: `Parolni tiklash uchun OTP kodingiz: ${otpCode}. Kod 5 daqiqa ichida amal qiladi.`,
+		})
+
+		res
+			.status(200)
+			.json({ success: true, message: 'OTP kod emailga yuborildi' })
+	} catch (error) {
+		next(error)
+	}
+}
+
+// 9. Reset Password
+const resetPassword = async (req, res, next) => {
+	try {
+		const { email, code, newPassword } = req.body
+
+		const user = await User.findOne({ email })
+		if (!user) throw CustomErrorHandler.NotFound('Foydalanuvchi topilmadi')
+
+		if (!user.otp || user.otp.code !== code)
+			throw CustomErrorHandler.BadRequest("OTP kod noto'g'ri")
+		if (user.otp.expiresAt < Date.now())
+			throw CustomErrorHandler.BadRequest('OTP kod muddati tugagan')
+
+		user.password = newPassword
+		user.otp = undefined
+		await user.save()
+
+		res
+			.status(200)
+			.json({ success: true, message: 'Parol muvaffaqiyatli yangilandi' })
+	} catch (error) {
+		next(error)
+	}
+}
+
+// 10. Change Password
+const changePassword = async (req, res, next) => {
+	try {
+		const { oldPassword, newPassword } = req.body
+
+		const user = await User.findById(req.user.id).select('+password')
+		if (!user) throw CustomErrorHandler.NotFound('Foydalanuvchi topilmadi')
+
+		const isMatch = await user.correctPassword(oldPassword, user.password)
+		if (!isMatch) throw CustomErrorHandler.BadRequest("Eski parol noto'g'ri")
+
+		user.password = newPassword
+		await user.save()
+
+		res
+			.status(200)
+			.json({ success: true, message: 'Parol muvaffaqiyatli yangilandi' })
+	} catch (error) {
+		next(error)
+	}
+}
+
 module.exports = {
 	register,
 	verify,
@@ -217,4 +299,7 @@ module.exports = {
 	logout,
 	getMe,
 	updateMe,
+	forgotPassword,
+	resetPassword,
+	changePassword,
 }

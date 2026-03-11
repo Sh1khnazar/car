@@ -14,7 +14,7 @@ const carSchema = new Schema(
 			enum: ['Avtomat karobka', 'Mexanik karobka'],
 			required: true,
 		},
-		tanirovka: { type: String, enum: ['Bor', 'Yo‘q'], default: 'Yo‘q' },
+		tanirovka: { type: String, enum: ['Bor', "Yo'q"], default: "Yo'q" },
 		description: { type: String, trim: true },
 
 		outerImage: { type: String, required: true },

@@ -1,5 +1,5 @@
 const Brand = require('../models/brand')
-const CustomErrorHandler = require('../services/CustomErrorHandler')
+const CustomErrorHandler = require('../utils/custom-error.handler')
 
 // 1. Barcha brandlarni olish
 exports.getAllBrands = async (req, res, next) => {
@@ -96,9 +96,16 @@ exports.deleteBrand = async (req, res, next) => {
 			return next(CustomErrorHandler.NotFound('Brand topilmadi'))
 		}
 
+		if (brand.image) {
+			const imagePath = path.join(process.cwd(), brand.image)
+			if (fs.existsSync(imagePath)) {
+				fs.unlinkSync(imagePath)
+			}
+		}
+
 		res.status(200).json({
 			status: 'success',
-			message: 'Brand o‘chirildi',
+			message: `Brand o‘chirildi`,
 		})
 	} catch (error) {
 		next(error)

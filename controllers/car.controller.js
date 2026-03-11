@@ -1,143 +1,208 @@
 const Car = require('../models/car')
-const Brand = require('../models/brand')
+const fs = require('fs')
+const path = require('path')
 const CustomErrorHandler = require('../utils/custom-error.handler')
 
-// 1. Markalar ro'yxatini olish (Chevrolet, Lada, Ferrari...)
-exports.getAllBrands = async (req, res, next) => {
-	try {
-		const brands = await Car.aggregate([
-			{
-				$group: {
-					_id: '$brand',
-					image: { $first: '$outerImage' },
-				},
-			},
-		])
-
-		res.status(200).json({
-			status: 'success',
-			data: { brands },
-		})
-	} catch (error) {
-		next(error)
-	}
-}
-
-// 2. Yangi brend qo'shish (Faqat Admin)
-exports.createBrand = async (req, res, next) => {
-	try {
-		const { name } = req.body
-		const image = req.file ? req.file.path : null
-
-		if (!image)
-			return next(CustomErrorHandler.BadRequest('Brend logotipini yuklang'))
-
-		const newBrand = await Brand.create({ name, image })
-		res.status(201).json({ status: 'success', data: newBrand })
-	} catch (error) {
-		next(error)
-	}
-}
-
-// 3. Tanlangan markaga tegishli modellarni olish
+// 1. Brand nomi bo'yicha mashinalarni olish
 exports.getCarsByBrand = async (req, res, next) => {
 	try {
-		const { brand } = req.params
+		const { brandName } = req.params
 
 		const cars = await Car.find({
-			brand: { $regex: brand, $options: 'i' },
-		}).sort('-createdAt')
-
-		if (!cars || cars.length === 0) {
-			return next(
-				CustomErrorHandler.NotFound(
-					`${brand} brendiga oid moshinalar topilmadi`,
-				),
-			)
-		}
+			brand: { $regex: new RegExp(`^${brandName}$`, 'i') },
+		})
 
 		res.status(200).json({
 			status: 'success',
 			results: cars.length,
-			data: { cars },
+			data: cars,
 		})
 	} catch (error) {
 		next(error)
 	}
 }
 
-// 4. Bitta mashinani ID bo'yicha olish (Hammasi uchun ochiq)
-exports.getOneCar = async (req, res, next) => {
+// 2. Bitta mashinani olish
+exports.getCar = async (req, res, next) => {
 	try {
+		const { brandName, id } = req.params
+
 		const car = await Car.findById(req.params.id)
+
 		if (!car) {
-			return next(CustomErrorHandler.NotFound('Bunday mashina topilmadi'))
+			return next(CustomErrorHandler.NotFound('Mashina topilmadi'))
 		}
+
+		if (car.brand.toLowerCase() !== brandName.toLowerCase()) {
+			return next(
+				CustomErrorHandler.NotFound('Bu mashina ushbu brandga tegishli emas'),
+			)
+		}
+
 		res.status(200).json({
 			status: 'success',
-			data: { car },
+			data: {
+				brand: car.brand,
+				modelName: car.modelName,
+				price: car.price,
+				year: car.year,
+				motor: car.motor,
+				color: car.color,
+				distance: car.distance,
+				gearbook: car.gearbook,
+				tanirovka: car.tanirovka,
+				description: car.description,
+				images: {
+					outer: car.outerImage,
+					inner: car.innerImage,
+					side: car.sideImage,
+				},
+			},
 		})
 	} catch (error) {
 		next(error)
 	}
 }
 
-// 5. Yangi mashina qo'shish (Faqat Admin)
+// 3. Mashina qo'shish (Admin)
 exports.createCar = async (req, res, next) => {
 	try {
-		const carData = {
-			...req.body,
-			outerImage: req.files?.outerImage ? req.files.outerImage[0].path : null,
-			innerImage: req.files?.innerImage ? req.files.innerImage[0].path : null,
-			sideImage: req.files?.sideImage ? req.files.sideImage[0].path : null,
-			addedBy: req.user.id,
+		const {
+			brand,
+			modelName,
+			price,
+			year,
+			motor,
+			color,
+			distance,
+			gearbook,
+			tanirovka,
+			description,
+		} = req.body
+
+		const baseUrl = `${req.protocol}://${req.get('host')}`
+
+		const outerImage = req.files?.outerImage
+			? `${baseUrl}/${req.files.outerImage[0].path.replace(process.cwd() + '/', '')}`
+			: null
+		const innerImage = req.files?.innerImage
+			? `${baseUrl}/${req.files.innerImage[0].path.replace(process.cwd() + '/', '')}`
+			: null
+		const sideImage = req.files?.sideImage
+			? `${baseUrl}/${req.files.sideImage[0].path.replace(process.cwd() + '/', '')}`
+			: null
+
+		if (!outerImage || !innerImage || !sideImage) {
+			return next(CustomErrorHandler.BadRequest('Barcha rasmlarni yuklang'))
 		}
 
-		const newCar = await Car.create(carData)
+		const newCar = await Car.create({
+			brand,
+			modelName,
+			price,
+			year,
+			motor,
+			color,
+			distance,
+			gearbook,
+			tanirovka,
+			description,
+			outerImage,
+			innerImage,
+			sideImage,
+			addedBy: req.user.id,
+		})
+
 		res.status(201).json({
 			status: 'success',
-			data: { car: newCar },
+			data: newCar,
 		})
 	} catch (error) {
 		next(error)
 	}
 }
 
-// 6. Mashinani tahrirlash (Faqat Admin)
+// 4. Mashinani yangilash (Admin)
 exports.updateCar = async (req, res, next) => {
 	try {
-		const updatedCar = await Car.findByIdAndUpdate(req.params.id, req.body, {
+		const { id } = req.params
+		const updates = { ...req.body }
+		const baseUrl = `${req.protocol}://${req.get('host')}`
+
+		// Eski mashinani olish
+		const oldCar = await Car.findById(id)
+		if (!oldCar) {
+			return next(CustomErrorHandler.NotFound('Mashina topilmadi'))
+		}
+
+		const deleteImage = imageUrl => {
+			if (!imageUrl) return
+			const imagePath = path.join(
+				process.cwd(),
+				imageUrl.replace(`${process.env.BASE_URL}/`, ''),
+			)
+			if (fs.existsSync(imagePath)) {
+				fs.unlinkSync(imagePath)
+			}
+		}
+
+		if (req.files?.outerImage) {
+			deleteImage(oldCar.outerImage)
+			updates.outerImage = `${baseUrl}/${req.files.outerImage[0].path.replace(process.cwd() + '/', '')}`
+		}
+		if (req.files?.innerImage) {
+			deleteImage(oldCar.innerImage)
+			updates.innerImage = `${baseUrl}/${req.files.innerImage[0].path.replace(process.cwd() + '/', '')}`
+		}
+		if (req.files?.sideImage) {
+			deleteImage(oldCar.sideImage)
+			updates.sideImage = `${baseUrl}/${req.files.sideImage[0].path.replace(process.cwd() + '/', '')}`
+		}
+
+		const updatedCar = await Car.findByIdAndUpdate(id, updates, {
 			new: true,
 			runValidators: true,
 		})
 
-		if (!updatedCar) {
-			return next(
-				CustomErrorHandler.NotFound('O‘zgartirish uchun mashina topilmadi'),
-			)
-		}
-
 		res.status(200).json({
 			status: 'success',
-			data: { car: updatedCar },
+			data: updatedCar,
 		})
 	} catch (error) {
 		next(error)
 	}
 }
 
-// 7. Mashinani o'chirish (Faqat Admin)
+// 5. Mashinani o'chirish (Admin)
 exports.deleteCar = async (req, res, next) => {
 	try {
-		const car = await Car.findByIdAndDelete(req.params.id)
+		const { id } = req.params
+
+		const car = await Car.findByIdAndDelete(id)
+
 		if (!car) {
-			return next(
-				CustomErrorHandler.NotFound('O‘chirish uchun mashina topilmadi'),
-			)
+			return next(CustomErrorHandler.NotFound('Mashina topilmadi'))
 		}
-		res.status(204).json({
+
+		// Rasmlarni o'chirish
+		const deleteImage = imageUrl => {
+			if (!imageUrl) return
+			const imagePath = path.join(
+				process.cwd(),
+				imageUrl.replace(`${process.env.BASE_URL}/`, ''),
+			)
+			if (fs.existsSync(imagePath)) {
+				fs.unlinkSync(imagePath)
+			}
+		}
+
+		deleteImage(car.outerImage)
+		deleteImage(car.innerImage)
+		deleteImage(car.sideImage)
+
+		res.status(200).json({
 			status: 'success',
-			data: null,
+			message: `${car.modelName} o'chirildi`,
 		})
 	} catch (error) {
 		next(error)

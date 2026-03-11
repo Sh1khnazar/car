@@ -1,4 +1,5 @@
 const { createLogger, format, transports } = require('winston')
+const { MongoDBTransportClass } = require('./mongo-transport')
 
 const logger = createLogger({
 	level: 'info',
@@ -10,6 +11,7 @@ const logger = createLogger({
 		new transports.Console(),
 		new transports.File({ filename: 'logs/error.log', level: 'error' }),
 		new transports.File({ filename: 'logs/combined.log' }),
+		new MongoDBTransportClass(),
 	],
 })
 

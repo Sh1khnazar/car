@@ -1,7 +1,8 @@
 const CustomErrorHandler = require('../utils/custom-error.handler')
 const jwt = require('jsonwebtoken')
+const User = require('../models/user')
 
-exports.protect = (req, res, next) => {
+exports.protect = async (req, res, next) => {
 	try {
 		const authHeader = req.headers.authorization
 
@@ -16,8 +17,13 @@ exports.protect = (req, res, next) => {
 		}
 
 		const decoded = jwt.verify(token, process.env.JWT_ACCESS_SECRET)
-		req.user = decoded
 
+		const user = await User.findById(decoded.id)
+		if (!user) {
+			return next(CustomErrorHandler.UnAuthorized('Foydalanuvchi topilmadi'))
+		}
+
+		req.user = user
 		next()
 	} catch (error) {
 		console.error('JWT Error:', error.message)
@@ -28,10 +34,8 @@ exports.protect = (req, res, next) => {
 }
 
 exports.isAdmin = (req, res, next) => {
-	if (!req.user || req.user.role !== 'admin') {
-		return next(
-			CustomErrorHandler.Forbidden('Faqat adminlar moshina qo‘sha oladi!'),
-		)
+	if (!req.user || !req.user.isAdmin) {
+		return next(CustomErrorHandler.Forbidden(`Sizga ruxsat berilmagan!`))
 	}
 
 	next()

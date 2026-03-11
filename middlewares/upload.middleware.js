@@ -2,7 +2,7 @@ const multer = require('multer')
 const path = require('path')
 const fs = require('fs')
 
-const uploadDir = path.join(__dirname, '../uploads/cars')
+const uploadDir = path.join(process.cwd(), 'uploads/cars')
 
 // Papka mavjudligini tekshirish va yaratish
 if (!fs.existsSync(uploadDir)) {
@@ -47,12 +47,10 @@ const upload = multer({
 	},
 })
 
-// 1. Mashina uchun 3 ta rasm (outer, inner, side)
 exports.uploadCarImages = upload.fields([
 	{ name: 'outerImage', maxCount: 1 },
 	{ name: 'innerImage', maxCount: 1 },
 	{ name: 'sideImage', maxCount: 1 },
 ])
 
-// 2. Brend uchun bitta rasm
 exports.uploadBrandLogo = upload.single('image')
